@@ -1,7 +1,72 @@
-- uses: actions/setup-python@v5
-  with:
-    python-version: '3.11'
-- name: Install deps
-  run: |
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt
+name: sbom-sca
+
+on:
+  workflow_dispatch:        # ручний запуск
+  push:
+    branches: [ main ]
+  pull_request:
+  release:
+    types: [ published ]
+  schedule:
+    - cron: '0 1 * * *'     # 01:00 UTC ≈ 03:00 Київ
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python оточення + інсталяція залежностей
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -c "import pkgutil; print('installed:', len(list(pkgutil.iter_modules())))" || true
+
+      # Інструменти SBOM/SCA
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Install Grype
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      # Генерація SBOM та SCA-скан
+      - name: Generate SBOM (CycloneDX)
+        run: syft dir:. -o cyclonedx-json > sbom.cdx.json
+
+      - name: SCA scan (JSON + table)
+        run: |
+          grype sbom:sbom.cdx.json -o json  > sca.json
+          grype sbom:sbom.cdx.json -o table > sca.html
+
+      # Діагностика на всяк випадок
+      - name: List workspace
+        if: always()
+        run: |
+          pwd
+          ls -la
+          echo "---- sizes ----"
+          [ -f sbom.cdx.json ] && wc -c sbom.cdx.json || echo "no sbom.cdx.json"
+          [ -f sca.json ] && wc -c sca.json || echo "no sca.json"
+          [ - f sca.html ] && wc -c sca.html || echo "no sca.html"
+
+      # Policy gate (High+Critical = BLOCK), але артефакти все одно зальотять
+      - name: Policy Gate (BLOCK on High+Critical)
+        run: python3 .github/policy_gate.py sca.json
+        continue-on-error: true
+
+      # Артефакти завжди
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-sca-${{ github.sha }}
+          path: |
+            sbom.cdx.json
+            sca.json
+            sca.html
+          retention-days: 7
