@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "cve": "CVE-2025-12345",
+      "component": "PyYAML",
+      "reason": "Тимчасове виключення для демонстрації",
+      "ticket": "SEC-42",
+      "owner": "r4tchetfox@gmail.com (Demian)",
+      "until": "2025-12-31"
+    }
+  ]
+}
